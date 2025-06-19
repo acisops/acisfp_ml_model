@@ -1,14 +1,14 @@
-from cheta import fetch_sci as fetch
-from utils import split_data, FPTempDataProcessor, fields
+from acisfp_model import ACISFPModel
 
-msids = fetch.MSIDset(fields, "2020:001", "2025:108", stat="5min")
+dp = ACISFPModel()
 
-dp = FPTempDataProcessor()
+msids = dp.fetch_data("2020:001", "2025:108")
 times, data = dp.process_data(msids, fit=True)
 
-ds = split_data(data, times)
+ds = dp.split_data(data, times)
 
 dp.make_model()
 
 dp.train_model(ds)
-dp.save("dp.joblib")
+
+dp.save("model_2020_2025.joblib")
