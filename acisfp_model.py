@@ -12,10 +12,16 @@ import matplotlib.patheffects as path_effects
 from cheta import fetch_sci as fetch
 
 
+# MSIDs used in the model:
+# 1crat: Cold radiator temperature, Side A
+# 1cbat: Camera body temperature, Side A
+# orbitephem0_[xyz]: Chandra orbit ephemeris data
+# aoattqt[1-4]: Attitude quaternion components 
 feature_cols = ["1crat", "1cbat"]
 feature_cols += [f"orbitephem0_{ax}" for ax in "xyz"]
 feature_cols += [f"aoattqt{i}" for i in range(1, 5)]
 
+# Target column is the FP temperature for the ACIS focal plane
 target_col = "fptemp_11"
 fields = [target_col] + feature_cols
 
@@ -31,7 +37,7 @@ def create_sequences(data, sequence_length=100):
     return np.array(X), np.array(y)
 
 
-class FPTempDataProcessor:
+class ACISFPModel:
     def __init__(
         self, scaler_x=None, scaler_y=None, sequence_length=100, model_filename=None
     ):
@@ -54,6 +60,18 @@ class FPTempDataProcessor:
 
     @classmethod
     def from_file(cls, filename):
+        """
+        Import an ACISFPModel from a joblib file written 
+        by the `save` method. This file contains the data 
+        scaler objects, sequence length, and the filename 
+        of the Keras model, which is in a separate file and
+        also loaded by this method.
+        
+        Parameters
+        ----------
+        filename : str
+            The path to the joblib file containing the model parameters.
+        """
         import joblib
 
         scaler_x, scaler_y, sequence_length, model_filename = joblib.load(filename)
@@ -77,6 +95,21 @@ class FPTempDataProcessor:
         return fetch.MSIDset(fields, start, stop, stat="5min")
 
     def process_data(self, msids, fit=False):
+        """
+        Process the fetched MSIDs to prepare them for model training or prediction.
+        This method scales the features and target variable, and returns the times
+        of the data as well as the processed data.
+        
+        Parameters
+        ----------
+        msids : MSIDset
+            The MSIDset object containing the telemetry data.
+        fit : bool, optional
+            If True, the method will fit the scalers to the data. If False, it will
+            use the existing scalers to transform the data. Default: False.
+        """
+        # The FP temperature times do not always match the times of the engineering
+        # telemetry, so we interpolate it to match the 1crat times.
         fptemp = np.interp(
             msids["1crat"].times, msids["fptemp_11"].times, msids["fptemp_11"].vals
         )
@@ -143,6 +176,9 @@ class FPTempDataProcessor:
         return data_splits
 
     def make_model(self):
+        """
+        Make the LSTM model for predicting FP temperature.
+        """
         input_shape = (self.sequence_length, len(feature_cols))
         model = Sequential()
         model.add(
@@ -167,6 +203,10 @@ class FPTempDataProcessor:
         self.model = model
 
     def train_model(self, ds):
+        """
+        Train the LSTM model using the provided training data
+        from `split_data`.
+        """
         history = self.model.fit(
             ds["X_train"],
             ds["y_train"],
@@ -178,9 +218,31 @@ class FPTempDataProcessor:
         return history
 
     def inverse_transform(self, y_in):
+        """
+        Inverse transform the scaled target variable back to its original scale.
+        
+        Parameters
+        ----------
+        y_in : numpy.ndarray
+            The scaled target variable, typically the output of the model's prediction.
+        """
         return self.scaler_y.inverse_transform(y_in.reshape(-1, 1))[:, 0]
 
     def test_plots(self, msids):
+        """
+        Produce a four-panel plot comparing the model's predictions
+        to the telemetry data for the focal plane temperature.
+        
+        Parameters
+        ----------
+        msids : MSIDset
+            The MSIDset object containing the telemetry data.
+            
+        Returns
+        -------
+        fig : matplotlib.figure.Figure
+            The figure object containing the plots.
+        """
         times, data = self.process_data(msids)
         X, y = create_sequences(data)
         times1 = CxoTime(times[self.sequence_length :])
@@ -241,6 +303,11 @@ class FPTempDataProcessor:
         return fig
 
     def save(self, filename):
+        """
+        Save the scalers and model information to a joblib file. 
+        The model itself is saved in the Keras format with the same
+        prefix filename but with a `.keras` extension.
+        """
         model_filename = filename.rsplit(".", 1)[0] + ".keras"
         joblib.dump(
             (
