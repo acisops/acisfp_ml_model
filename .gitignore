@@ -3,4 +3,5 @@
 *.html
 *.rst
 *.png
+*~
 __pycache__
