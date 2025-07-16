@@ -1,3 +1,3 @@
-ACIS Focal Plane Temperature Model Runs
-=======================================
+ACIS Focal Plane Temperature LSTM Model Runs
+============================================
 
