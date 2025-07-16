@@ -40,7 +40,7 @@ def create_sequences(data, sequence_length=100):
     return np.array(X), np.array(y)
 
 
-class ACISFPModel:
+class ACISFPMLModel:
     def __init__(
         self, scaler_x=None, scaler_y=None, sequence_length=100, model_filename=None
     ):
