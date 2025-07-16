@@ -10,7 +10,10 @@ from cxotime import CxoTime
 from matplotlib import gridspec
 import matplotlib.patheffects as path_effects
 from cheta import fetch_sci as fetch
+from pathlib import Path
 
+
+task_data_dir = Path(__file__).parent
 
 # MSIDs used in the model:
 # 1crat: Cold radiator temperature, Side A
@@ -92,7 +95,9 @@ class ACISFPModel:
             a CxoTime object, or a float representing seconds since the beginning
             of the mission.
         """
-        return fetch.MSIDset(fields, start, stop, stat="5min")
+        msids = fetch.MSIDset(fields, start, stop, stat="5min")
+        msids.interpolate(dt=328.0)
+        return msids
 
     def process_data(self, msids, fit=False):
         """
@@ -217,6 +222,24 @@ class ACISFPModel:
 
         return history
 
+    def save(self, filename):
+        """
+        Save the scalers and model information to a joblib file. 
+        The model itself is saved in the Keras format with the same
+        prefix filename but with a `.keras` extension.
+        """
+        model_filename = filename.rsplit(".", 1)[0] + ".keras"
+        joblib.dump(
+            (
+                self.scaler_x,
+                self.scaler_y,
+                self.sequence_length,
+                model_filename,
+            ),
+            filename,
+        )
+        self.model.save(model_filename)
+
     def inverse_transform(self, y_in):
         """
         Inverse transform the scaled target variable back to its original scale.
@@ -227,8 +250,8 @@ class ACISFPModel:
             The scaled target variable, typically the output of the model's prediction.
         """
         return self.scaler_y.inverse_transform(y_in.reshape(-1, 1))[:, 0]
-
-    def test_plots(self, msids):
+        
+    def make_test_plots(self, msids):
         """
         Produce a four-panel plot comparing the model's predictions
         to the telemetry data for the focal plane temperature.
@@ -302,20 +325,77 @@ class ACISFPModel:
             ax.tick_params(axis="x", rotation=30)
         return fig
 
-    def save(self, filename):
+    def make_web_page(self, outpath=None, stop=None, days=14):
+        """ 
+        Make a web page comparing ACIS FP telemetry to 
+        the model predictions for the last `days` days from the
+        time `stop`.
+        
+        Parameters
+        ----------
+        stop : str, CxoTime, or float, optional
+            The stop time for the data retrieval. Can be a string in 
+            'YYYY:DOY:HH:MM:SS' format, a CxoTime object, or a float 
+            representing seconds since the beginning of the mission.
+            If None, it will use the time of the latest available data.
+        days : int, optional
+            The number of days before the stop time to fetch data for.  
+            Default: 14
         """
-        Save the scalers and model information to a joblib file. 
-        The model itself is saved in the Keras format with the same
-        prefix filename but with a `.keras` extension.
-        """
-        model_filename = filename.rsplit(".", 1)[0] + ".keras"
-        joblib.dump(
-            (
-                self.scaler_x,
-                self.scaler_y,
-                self.sequence_length,
-                model_filename,
-            ),
-            filename,
-        )
-        self.model.save(model_filename)
+        import astropy.units as u
+        import shutil
+        from docutils.core import publish_file
+        import jinja2
+    
+        if outpath is None:
+            outpath = Path.cwd()
+        outpath = Path(outpath)
+        if not outpath.exists():
+            outpath.mkdir(parents=True, exist_ok=True)
+    
+        if stop is None:
+            stop = 1.0e99
+            for msid in fields:
+                _, tmax = fetch.get_time_range(msid)
+                stop = min(stop, tmax)
+        stop = CxoTime(stop)
+        start = stop - days * u.day
+        msids = self.fetch_data(start, stop)
+        fig = self.make_test_plots(msids)
+        date_str = stop.yday[:8].replace(":", "_")
+        fig.savefig(outpath / f"acisfp_model_{date_str}.png", bbox_inches="tight")
+
+        index_path = outpath / "index.rst"
+        if not index_path.exists():
+            template_path = task_data_dir / "templates/index_template.rst"
+            shutil.copy2(template_path, index_path)
+        with open(index_path) as fin:
+            index_content = fin.read()
+            index_content += f"* `{stop.yday[:8]} <{date_str}.html>`_\n"
+            with open(index_path, "w") as fout:
+                fout.write(index_content)
+        template_path = task_data_dir / "templates/model_template.rst"
+        with open(template_path) as fin:
+            model_template = fin.read()
+            template = jinja2.Template(model_template)
+        context = {
+            "start": start.yday,
+            "stop": stop.yday,
+            "start_date": start.yday[:8],
+            "stop_date": stop.yday[:8],
+            "image_file": f"acisfp_model_{date_str}.png",
+        }
+        # Render the template and write it to a file
+        with open(f"{date_str}.rst", "w") as fout:
+            fout.write(
+                template.render(**context)
+            )
+        prefixes = ["index", date_str]
+        for prefix in prefixes:
+            infile = str(outpath / f"{prefix}.rst")
+            outfile = str(outpath / f"{prefix}.html")
+            publish_file(
+                source_path=infile,
+                destination_path=outfile,
+                writer_name="html",
+            )
