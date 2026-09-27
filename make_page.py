@@ -3,4 +3,6 @@ from acisfp_ml_model import ACISFPMLModel
 
 m = ACISFPMLModel.from_file("model_2020_2025.joblib")
 
-m.make_web_page()
+outpath = "/proj/web-cxc/htdocs/acis/Thermal/acisfp_ml_model"
+
+m.make_web_page(outpath=outpath)

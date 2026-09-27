@@ -11,6 +11,7 @@ from matplotlib import gridspec
 import matplotlib.patheffects as path_effects
 from cheta import fetch_sci as fetch
 from pathlib import Path
+from astropy.table import Table
 
 
 task_data_dir = Path(__file__).parent
@@ -323,7 +324,9 @@ class ACISFPMLModel:
             ax.set_xlabel("Date")
             ax.xaxis.set_major_formatter(mdates.DateFormatter("%Y:%j"))
             ax.tick_params(axis="x", rotation=30)
-        return fig
+        t = Table({"date": times1.yday, "data": y_true, "model": y_pred})
+    
+        return fig, t
 
     def make_web_page(self, outpath=None, stop=None, days=14):
         """ 
@@ -361,10 +364,10 @@ class ACISFPMLModel:
         stop = CxoTime(stop)
         start = stop - days * u.day
         msids = self.fetch_data(start, stop)
-        fig = self.make_test_plots(msids)
+        fig, t = self.make_test_plots(msids)
         date_str = stop.yday[:8].replace(":", "_")
         fig.savefig(outpath / f"acisfp_model_{date_str}.png", bbox_inches="tight")
-
+        t.write(outpath / f"acisfp_model_{date_str}.dat", format="ascii.commented_header")
         index_path = outpath / "index.rst"
         if not index_path.exists():
             template_path = task_data_dir / "templates/index_template.rst"
@@ -386,7 +389,7 @@ class ACISFPMLModel:
             "image_file": f"acisfp_model_{date_str}.png",
         }
         # Render the template and write it to a file
-        with open(f"{date_str}.rst", "w") as fout:
+        with open(outpath / f"{date_str}.rst", "w") as fout:
             fout.write(
                 template.render(**context)
             )
